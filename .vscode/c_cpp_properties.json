@@ -1,0 +1,35 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}",
+                "/home/nate/linux-6.4.11/include",
+                "/home/nate/linux-6.4.11/include/uapi",
+                "/home/nate/linux-6.4.11/include/generated",
+                "/home/nate/linux-6.4.11/arch/x86/include",
+                "/home/nate/linux-6.4.11/arch/x86/include/uapi",
+                "/home/nate/linux-6.4.11/arch/x86/include/generated"
+            ],
+            "defines": [
+                "__KERNEL__"
+            ],
+            "intelliSenseMode": "clang-x64",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}",
+                    "/home/nate/linux-6.4.11/include",
+                    "/home/nate/linux-6.4.11/mm",
+                    "/home/nate/linux-6.4.11/fs",
+                    "/home/nate/linux-6.4.11/kernel"
+                ],
+                "limitSymbolsToIncludedHeaders": true,
+                "databaseFilename": ""
+            },
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c89",
+            "cppStandard": "c++17"
+        }
+    ],
+    "version": 4
+}
