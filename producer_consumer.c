@@ -34,6 +34,8 @@ MODULE_DESCRIPTION("Solving the Producer Consumer problem using semaphores");
     to get time task started, use task_struct->start_time
  */
 
+//when we made the module we set these params
+
 // Buffer size
 static int buffSize = 10;
 module_param(buffSize, int, 0644);
@@ -57,9 +59,9 @@ module_param(uuid, uint, 0644);
 MODULE_PARM_DESC(uuid, "The uuid of the user");
 
 // Semaphores ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-static struct semaphore empty;
-static struct semaphore full;
-static struct semaphore mutex;
+static struct semaphore empty;  //when 0 cannot add any more
+static struct semaphore full;   //when full is 0, cannot take any
+static struct semaphore mutex; //lock
 
 // Threads ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 static int kthread_producer(void *arg);
@@ -82,17 +84,17 @@ static struct task_struct **consumerThreads = NULL;
         task_struct->start_time is the time the task started
 
 */
-static struct task_struct **buffer;
-static int head = 0;
-static int tail = 0;
+static struct task_struct **buffer; //array of task structs which is why double pointer, circular
+static int head = 0; //to keep track of where we remove
+static int tail = 0; //to keep track of where we add
 
-static int totalConsumed = 0;
-static long totalProcessNanoseconds = 0;
+static int totalConsumed = 0; //totalConsumed is number of processes consumed
+static long totalProcessNanoseconds = 0; //keeps track of time of all consumed processes
 
 
 // Module initializer ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 static int __init producer_consumer_init(void){
-    printk(KERN_INFO "producer_consumer module loaded\n"); 
+    printk(KERN_INFO "producer_consumer module loaded\n"); //just left for testing
 
     /* printed out the parameters for testing
     printk(KERN_INFO "buffSize: %d\n", buffSize);
@@ -128,30 +130,30 @@ static int __init producer_consumer_init(void){
     */
 
     // 1. Initialize semaphores ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    sema_init(&empty, buffSize);
-    sema_init(&full, 0);
+    sema_init(&empty, buffSize); //we make the empty the buffsize
+    sema_init(&full, 0); //we make full 0, since we can add (no slots not full)
     sema_init(&mutex, 1); // binary semaphore set to 1 (unlocked)
 
     // 2. Initialize buffer ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    buffer = kmalloc(buffSize * sizeof(struct task_struct *), GFP_KERNEL);
-    if(!buffer){
+    buffer = kmalloc(buffSize * sizeof(struct task_struct *), GFP_KERNEL); //we allocate memory for the buffer, we use gfp_kernel flag(normal allocation), and we allocate size of task-struct pointer * buffersize
+    if(!buffer){ //if we fail to allocate memory for buffer
         printk(KERN_ERR "Failed to allocate memory for buffer\n");
         return -1;
     }
 
     // 3. Create Consumers ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     if(cons > 0){
-        printk(KERN_INFO "Creating consumer threads\n");
-        consumerThreads = kmalloc(cons * sizeof(struct task_struct *), GFP_KERNEL);
-        if(!consumerThreads){
+        printk(KERN_INFO "Creating consumer threads\n"); //we need to keep track of task structs to kill them later, cannot lose(floating memory)
+        consumerThreads = kmalloc(cons * sizeof(struct task_struct *), GFP_KERNEL); //allocate the space for consumer thread
+        if(!consumerThreads){ //failed to allocate consumer thread
             printk(KERN_ERR "Failed to allocate memory for consumer threads\n");
             return -1;
         }
-        for(int i = 0; i < cons; i++){
-            char *name = kmalloc(20 * sizeof(char), GFP_KERNEL);
-            sprintf(name, "Consumer-%d", i+1);
-            consumerThreads[i] = kthread_run(kthread_consumer, name, "%s", name);
-            if (IS_ERR(consumerThreads[i])) {
+        for(int i = 0; i < cons; i++){ //loop over all consumer threads, we create consumer threads
+            char *name = kmalloc(20 * sizeof(char), GFP_KERNEL); //name consumer thread
+            sprintf(name, "Consumer-%d", i+1); //put Consumer-number into the name of the current consumer
+            consumerThreads[i] = kthread_run(kthread_consumer, name, "%s", name); //we run the created consumer thread(function(below),name of thread,string type,(name as argument passed into function))
+            if (IS_ERR(consumerThreads[i])) {  //if kthread run fails then we cannot create thread consumer
                 printk(KERN_INFO "ERROR: Cannot create thread Consumer\n");
                 return PTR_ERR(consumerThreads[i]);;
             }
@@ -159,10 +161,10 @@ static int __init producer_consumer_init(void){
     }
 
     // 4. Create producer ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if(prod == 1){
-        printk(KERN_INFO "Creating producer thread\n");
-        producerThread = kthread_run(kthread_producer, NULL, "Producer-1");
-        if (IS_ERR(producerThread)) {
+    if(prod == 1){ //we can only have one producer
+        printk(KERN_INFO "Creating producer thread\n"); 
+        producerThread = kthread_run(kthread_producer, NULL, "Producer-1"); //run the kthread_producer, NULL(default), "Producer-1" is name
+        if (IS_ERR(producerThread)) { //if there is error
             printk(KERN_INFO "ERROR: Cannot create thread Producer-1\n");
             return PTR_ERR(producerThread);
         }
@@ -171,25 +173,26 @@ static int __init producer_consumer_init(void){
 
     return 0;
 }
-
+//producer thread method
 static int kthread_producer(void *arg){
-    struct task_struct *task;
-    int count = 0;
-    for_each_process(task){
-        if(task->cred->uid.val == uuid){
+    struct task_struct *task; //we create task pointer, stores the current task that our producer is looking at
+    int count = 0; //intialize the count
+    for_each_process(task){ //for each process running on the system
+        if(task->cred->uid.val == uuid){ //if the task belongs to the user (uid = who owns the task)
             // add task to buffer
             // wait for empty using down_interruptible to allow for module to be unloaded
-            if (down_interruptible(&empty)) break;
-            if (down_interruptible(&mutex)) break;
+            //down_interruptiable means we can interrupt task and we can decrement
+            if (down_interruptible(&empty)) break; // we move empty down, if it cannot aquire a lock it waits. Interrupted(true) --> breaks
+            if (down_interruptible(&mutex)) break; // we move lock down, but cannot move we wait. Interrupted(true) --> breaks
             // Critical section ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            buffer[tail] = task;
+            buffer[tail] = task; // we add things to the tail
             // print with this format: [Producer-1] Produced Item#-12 at buffer index:1 for PID:136042
-            count++;
-            printk(KERN_INFO "[Producer-1] Produced Item#-%d at buffer index:%d for PID:%d\n", count, tail, task->pid);
-            tail = (tail + 1) % buffSize;
+            count++; //increment the item count for print
+            printk(KERN_INFO "[Producer-1] Produced Item#-%d at buffer index:%d for PID:%d\n", count, tail, task->pid); // we tell which item was produced where
+            tail = (tail + 1) % buffSize; //this is how we keep track of where we are in the tail
             // end critical section ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            up(&mutex);
-            up(&full);
+            up(&mutex); //increment mutex, release lock
+            up(&full); //increment full, addded task (we tell consumer there is stuff to take)
             // signal the semaphore
         }
     }
@@ -197,55 +200,55 @@ static int kthread_producer(void *arg){
 }
 
 static int kthread_consumer(void *arg){
-    char *thread_name = (char *)arg;
-    struct task_struct *task;
-    char timeFormat[9];
-    long taskTime;
+    char *thread_name = (char *)arg; // we get the name name of thread we are using
+    struct task_struct *task; //keep track of current task
+    char timeFormat[9]; //string to keep track of time to convert into hours, minutes, seconds
+    long taskTime; //time of task in nanoseconds (currentTime - taskTime)
     //var to store current time
-    printk(KERN_INFO "Consumer thread created\n");
-    while (!kthread_should_stop())
+    printk(KERN_INFO "Consumer thread created\n"); //for testing
+    while (!kthread_should_stop()) //while kernel threasd is running, consumer runs indefintely(producer stops)
     {
         // wait for full using down_interruptible to allow for module to be unloaded
-        if (down_interruptible(&full)) break;
-        if (down_interruptible(&mutex)) break;
+        if (down_interruptible(&full)) break; //break if interrupted, otherwise just wait
+        if (down_interruptible(&mutex)) break; //break if interrupted, otherwise just wait
         // Critical section ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        task = buffer[head];
-        totalConsumed++;
-        taskTime = ktime_get_ns() - task->start_time;
-        totalProcessNanoseconds += taskTime;
+        task = buffer[head]; //we take from the head
+        totalConsumed++; //increment number of processes consumed 
+        taskTime = ktime_get_ns() - task->start_time; //currentTime - startTime
+        totalProcessNanoseconds += taskTime; //we add the current taskTime to entire process time
         // convert taskTime to HH:MM:SS format
-        sprintf(timeFormat, "%02ld:%02ld:%02ld", taskTime / 3600000000000, (taskTime / 60000000000) % 60, (taskTime / 1000000000) % 60);
+        sprintf(timeFormat, "%02ld:%02ld:%02ld", taskTime / 3600000000000, (taskTime / 60000000000) % 60, (taskTime / 1000000000) % 60); //formats the task time to put into hours,minutes,seconds
         /* print out task info using this format: 
         [<Consumer-thread-name>] Consumed Item#-<Item-Num> on buffer index: <buffer-index> PID:<PID consumed> Elapsed Time- <Elapsed time of the consumed PID in HH:MM:SS> */
-        printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:%d PID:%d Elapsed Time- %s", thread_name, totalConsumed, head, task->pid, timeFormat);
-        head = (head + 1) % buffSize;
+        printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:%d PID:%d Elapsed Time- %s", thread_name, totalConsumed, head, task->pid, timeFormat); // we print the output
+        head = (head + 1) % buffSize; //we move the head to the next slot in buffer
         // end critical section ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        up(&mutex);
-        up(&empty);
+        up(&mutex); //we release lock
+        up(&empty); //signal empty slot
         // signal the semaphore
     }
-    kfree(thread_name);
+    kfree(thread_name); //release thread name in memory 
     return 0;
 }
 
 // Module exit function ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 static void __exit producer_consumer_exit(void){
-    char timeFormat[9];
+    char timeFormat[9]; //for our time format
     /* clean up tasks
         1. stop threads
         2. signal semaphores to wake up threads
         3. free memory
     */
     
-    for(int i = 0; i < cons; i++){
+    for(int i = 0; i < cons; i++){ //for all consumer threads, we stop them from running
         kthread_stop(consumerThreads[i]);
     }
 
-    up(&mutex);
-    up(&full);
+    up(&mutex); //we release the lock
+    up(&full); //we signal to the consumer can take stuff
 
-    kfree(buffer);
-    if(cons > 0)
+    kfree(buffer); //we release the buffer in memory
+    if(cons > 0) //we release consumer threads in memory
         kfree(consumerThreads);
 
     // print: The total elapsed time of all processes for UID <UID of the user> is <HH:MM:SS>
